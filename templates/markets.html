@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Data Mahasiswa — ParkirIn</title>
+    <meta name="description" content="Kelola data registrasi mahasiswa untuk sistem parkir cerdas ParkirIn" />
+    <script>
+      (function () {
+        const t = localStorage.getItem("theme") || "dark";
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/parkirin.css') }}" />
+  </head>
+
+  <body>
+    <div class="app-shell">
+      <!-- ═══════ SIDEBAR ═══════ -->
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-icon">P</div>
+          <span class="brand-name">ParkirIn</span>
+        </div>
+
+        <nav class="sidebar-nav">
+          <div class="nav-label">Menu</div>
+
+          <a href="{{ url_for('index') }}" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            </svg>
+            Dashboard
+          </a>
+
+          <a href="{{ url_for('markets') }}" class="nav-link active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Data Mahasiswa
+          </a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="theme-toggle" id="themeToggle">
+            <div class="theme-toggle-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+              Tema
+            </div>
+            <div class="theme-switch" id="themeSwitch"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ═══════ MAIN ═══════ -->
+      <div class="main-area">
+        <header class="topbar">
+          <h1 class="topbar-title">Data Mahasiswa</h1>
+          <div class="topbar-actions">
+            <button class="btn btn-primary" onclick="openModal()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Tambah Mahasiswa
+            </button>
+          </div>
+        </header>
+
+        <div class="content">
+          <!-- Stats -->
+          <div class="stats-row">
+            <div class="stat-card">
+              <div class="stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value" id="totalStudents">—</div>
+                <div class="stat-label">Total Terdaftar</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value" id="totalFrames">—</div>
+                <div class="stat-label">Total Frame Wajah</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Student Table -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Daftar Mahasiswa Terregistrasi</h3>
+              <span class="badge badge-primary" id="studentCount">0 Data</span>
+            </div>
+            <div class="data-table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>No</th>
+                    <th>Foto</th>
+                    <th>Nama Lengkap</th>
+                    <th>Nomor Plat</th>
+                    <th>Data Wajah</th>
+                    <th style="text-align:right;">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="studentTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <footer class="app-footer">
+          Copyright &copy; 2026 ParkirIn — Fasilkom-TI USU
+        </footer>
+      </div>
+    </div>
+
+    <!-- ═══════ REGISTRATION MODAL ═══════ -->
+    <div class="modal-backdrop" id="registrationModal">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h3>Registrasi Mahasiswa</h3>
+          <button class="modal-close" onclick="closeModal()" title="Tutup">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Nama Lengkap</label>
+            <input type="text" id="regNama" placeholder="Contoh: Aris Setiawan" class="form-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Nomor Plat</label>
+            <input type="text" id="regPlat" placeholder="Contoh: BK 1234 ABC" class="form-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Pendaftaran Wajah (6 Pose)</label>
+            <div class="camera-container">
+              <video id="video" autoplay playsinline style="{% if invert_camera %}transform: scaleX(-1);{% endif %}"></video>
+              <canvas id="overlayCanvas" style="{% if invert_camera %}transform: scaleX(-1);{% endif %}"></canvas>
+              <div class="camera-instruction" id="instructionOverlay">Menunggu Kamera...</div>
+              <div class="camera-progress">
+                Progress: <span id="count">0</span>/6
+              </div>
+            </div>
+            <button class="btn btn-success w-full mt-12" id="captureBtn" onclick="startCapture()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Mulai Pendaftaran Wajah
+            </button>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal()">Batal</button>
+          <button class="btn btn-primary" id="saveBtn" disabled onclick="saveData()" style="cursor:not-allowed;opacity:0.5;">Simpan Data</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ MediaPipe Libraries ═══════ -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+    <script>
+      // ═══════ THEME TOGGLE ═══════
+      document.getElementById("themeToggle").addEventListener("click", () => {
+        const html = document.documentElement;
+        const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        html.setAttribute("data-theme", next);
+        localStorage.setItem("theme", next);
+      });
+
+      // ═══════ LOAD ON READY ═══════
+      document.addEventListener('DOMContentLoaded', () => {
+        loadStudents();
+      });
+
+      // ═══════ MODAL ═══════
+      function openModal() {
+        document.getElementById("registrationModal").classList.add("open");
+        navigator.mediaDevices
+          .getUserMedia({ video: true })
+          .then((stream) => {
+            document.getElementById("video").srcObject = stream;
+          })
+          .catch((err) => console.error("Gagal akses kamera: ", err));
+      }
+
+      function closeModal() {
+        document.getElementById("registrationModal").classList.remove("open");
+        const video = document.getElementById("video");
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach((track) => track.stop());
+        }
+        if (mpCamera) {
+           mpCamera.stop();
+        }
+        captureState = -1;
+        document.getElementById("instructionOverlay").style.display = "none";
+        const canvas = document.getElementById("overlayCanvas");
+        if (canvas) canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+        document.getElementById("captureBtn").disabled = false;
+
+        document.getElementById("regNama").value = "";
+        document.getElementById("regPlat").value = "";
+        document.getElementById("count").innerText = "0";
+        document.getElementById("saveBtn").disabled = true;
+        document.getElementById("saveBtn").style.cursor = "not-allowed";
+        document.getElementById("saveBtn").style.opacity = "0.5";
+      }
+
+      // ═══════ MEDIAPIPE FACE MESH ═══════
+      let capturedBlobs = [];
+      let captureState = -1; // -1: off, 0-5: poses, 6: scan, 7: done
+      let faceMesh = null;
+      let mpCamera = null;
+
+      const instructions = [
+        "Lihat LURUS ke depan",
+        "Tengok perlahan ke KIRI",
+        "Tengok perlahan ke KANAN",
+        "Tundukkan kepala (BAWAH)",
+        "Dongakkan kepala (ATAS)",
+        "Tersenyumlah (SENYUM)"
+      ];
+
+      function showInstruction(text, color="#00ffcc") {
+        const overlay = document.getElementById("instructionOverlay");
+        overlay.style.display = "block";
+        overlay.style.color = color;
+        overlay.innerText = text;
+      }
+
+      async function initMediaPipe() {
+        if (faceMesh) {
+          mpCamera.start();
+          return;
+        }
+        const videoElement = document.getElementById("video");
+
+        faceMesh = new FaceMesh({locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+        }});
+
+        faceMesh.setOptions({
+          maxNumFaces: 1,
+          refineLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults(onResults);
+
+        mpCamera = new Camera(videoElement, {
+          onFrame: async () => {
+            if (captureState >= 0 && captureState <= 6) {
+              await faceMesh.send({image: videoElement});
+            }
+          },
+          width: 640,
+          height: 480
+        });
+        mpCamera.start();
+      }
+
+      let lastCaptureTime = 0;
+
+      function onResults(results) {
+        const canvas = document.getElementById("overlayCanvas");
+        const ctx = canvas.getContext("2d");
+        const video = document.getElementById("video");
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Animasi Scanning Jaring Hijau (Futuristik)
+        if (captureState === 6 && results.multiFaceLandmarks) {
+          for (const landmarks of results.multiFaceLandmarks) {
+            drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, {color: '#00ffcc', lineWidth: 1});
+            drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, {color: '#ff3030', lineWidth: 2});
+            drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, {color: '#30ff30', lineWidth: 2});
+            drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, {color: '#e0e0e0', lineWidth: 2});
+          }
+        }
+
+        // Logika Pose Estimation
+        if (captureState >= 0 && captureState < 6 && results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+          const now = Date.now();
+          if (now - lastCaptureTime < 1000) return;
+
+          const landmarks = results.multiFaceLandmarks[0];
+          const nose = landmarks[1];
+          const leftEdge = landmarks[234];
+          const rightEdge = landmarks[454];
+          const top = landmarks[10];
+          const bottom = landmarks[152];
+          const mouthLeft = landmarks[61];
+          const mouthRight = landmarks[291];
+
+          const faceWidth = Math.sqrt(Math.pow(rightEdge.x - leftEdge.x, 2) + Math.pow(rightEdge.y - leftEdge.y, 2));
+          const faceHeight = Math.sqrt(Math.pow(bottom.x - top.x, 2) + Math.pow(bottom.y - top.y, 2));
+          const mouthWidth = Math.sqrt(Math.pow(mouthRight.x - mouthLeft.x, 2) + Math.pow(mouthRight.y - mouthLeft.y, 2));
+
+          const midX = (leftEdge.x + rightEdge.x) / 2;
+          const midY = (top.y + bottom.y) / 2;
+
+          const yaw = (nose.x - midX) / faceWidth;
+          const pitch = (nose.y - midY) / faceHeight;
+          const smileRatio = mouthWidth / faceWidth;
+
+          let readyToCapture = false;
+
+          if (captureState === 0 && Math.abs(yaw) < 0.05 && Math.abs(pitch) < 0.05) readyToCapture = true;
+          else if (captureState === 1 && yaw > 0.06) readyToCapture = true;
+          else if (captureState === 2 && yaw < -0.06) readyToCapture = true;
+          else if (captureState === 3 && pitch > 0.06) readyToCapture = true;
+          else if (captureState === 4 && pitch < -0.04) readyToCapture = true;
+          else if (captureState === 5 && smileRatio > 0.38) readyToCapture = true;
+
+          if (readyToCapture) {
+            takeSnapshot();
+            lastCaptureTime = now;
+            captureState++;
+            document.getElementById("count").innerText = captureState;
+
+            if (captureState < 6) {
+              showInstruction(instructions[captureState]);
+            } else {
+              startScanningAnimation();
+            }
+          }
+        }
+      }
+
+      function takeSnapshot() {
+        const video = document.getElementById("video");
+        const snapCanvas = document.createElement("canvas");
+        snapCanvas.width = video.videoWidth;
+        snapCanvas.height = video.videoHeight;
+        snapCanvas.getContext("2d").drawImage(video, 0, 0);
+        snapCanvas.toBlob((blob) => {
+          capturedBlobs.push(blob);
+        }, "image/jpeg", 0.95);
+      }
+
+      function startScanningAnimation() {
+        showInstruction("SCANNING FACE...", "#00ffcc");
+        captureState = 6;
+
+        setTimeout(() => {
+          captureState = 7;
+          const canvas = document.getElementById("overlayCanvas");
+          canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+
+          showInstruction("✓ COMPLETED!", "#10b981");
+          const saveBtn = document.getElementById("saveBtn");
+          saveBtn.disabled = false;
+          saveBtn.style.cursor = "pointer";
+          saveBtn.style.opacity = "1";
+
+          setTimeout(() => {
+            document.getElementById("instructionOverlay").style.display = "none";
+          }, 2500);
+        }, 3500);
+      }
+
+      function startCapture() {
+        document.getElementById("captureBtn").disabled = true;
+        capturedBlobs = [];
+        document.getElementById("count").innerText = "0";
+        captureState = 0;
+        showInstruction(instructions[0]);
+        initMediaPipe();
+      }
+
+      // ═══════ SAVE DATA ═══════
+      async function saveData() {
+        const nama = document.getElementById("regNama").value;
+        const plat = document.getElementById("regPlat").value;
+
+        if (!nama || !plat || capturedBlobs.length < 5) {
+          alert("Lengkapi data dan capture wajah minimal 5x!");
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("name", nama);
+        formData.append("plate", plat);
+        capturedBlobs.forEach((blob, index) => {
+          formData.append("images", blob, `face_${index}.jpg`);
+        });
+
+        try {
+          const response = await fetch("/register", {
+            method: "POST",
+            body: formData,
+          });
+          const result = await response.json();
+
+          if (result.status === "success") {
+            alert("Data mahasiswa berhasil disimpan!");
+            closeModal();
+            loadStudents();
+          } else {
+            alert("Gagal: " + result.msg);
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Terjadi kesalahan koneksi ke server.");
+        }
+      }
+
+      // ═══════ DELETE ═══════
+      async function deleteStudent(userId) {
+        if (confirm("Hapus data mahasiswa ini?")) {
+          try {
+            const response = await fetch(`/delete_student/${userId}`, { method: 'DELETE' });
+            const result = await response.json();
+            if (result.status === "success") {
+              loadStudents();
+            } else {
+              alert("Gagal menghapus: " + result.msg);
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }
+      }
+
+      // ═══════ LOAD TABLE ═══════
+      async function loadStudents() {
+        try {
+          const response = await fetch('/api/students');
+          const students = await response.json();
+          const tableBody = document.getElementById("studentTableBody");
+          tableBody.innerHTML = "";
+
+          let totalFrames = 0;
+          students.forEach((student, index) => {
+            totalFrames += student.face_count;
+            const row = `
+              <tr>
+                <td>${index + 1}</td>
+                <td>
+                  <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(student.name)}&background=3b82f6&color=fff&bold=true&size=42" class="avatar" alt="${student.name}" />
+                </td>
+                <td><strong>${student.name}</strong></td>
+                <td style="font-family:var(--font-mono);font-size:12px;">${student.plate}</td>
+                <td><span class="badge badge-success">${student.face_count} Frame</span></td>
+                <td style="text-align:right;">
+                  <button class="btn btn-danger btn-sm" onclick="deleteStudent(${student.id})">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Hapus
+                  </button>
+                </td>
+              </tr>
+            `;
+            tableBody.insertAdjacentHTML('beforeend', row);
+          });
+
+          document.getElementById("studentCount").textContent = students.length + " Data";
+          document.getElementById("totalStudents").textContent = students.length;
+          document.getElementById("totalFrames").textContent = totalFrames;
+        } catch (err) {
+          console.error("Gagal memuat data:", err);
+        }
+      }
+    </script>
+  </body>
+</html>

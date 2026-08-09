@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard — ParkirIn (Direct IP)</title>
+    <meta name="description" content="ParkirIn — Sistem Verifikasi Parkir Cerdas berbasis Face Recognition dan License Plate Detection" />
+    <script>
+      (function () {
+        const t = localStorage.getItem("theme") || "dark";
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/parkirin.css') }}" />
+    <style>
+      .dashboard-grid {
+        align-items: flex-start; /* Prevent cards from stretching vertically */
+      }
+
+      .dual-cam-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .cam-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border-bottom: 1px solid var(--border);
+      }
+      .cam-label .dot-plate { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
+      .cam-label .dot-face  { width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; }
+      .cam-feed {
+        position: relative;
+        background: #000;
+        border-radius: 0 0 8px 8px;
+        overflow: hidden;
+        aspect-ratio: 16/9;
+      }
+      .cam-feed img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+      }
+      .cam-feed .video-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+      }
+      
+      /* Face Overlay on top of image */
+      .face-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+
+      .step-indicator {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        font-size: 14px;
+        font-weight: 500;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        transition: all 0.3s ease;
+      }
+      .step-indicator.scanning { border-color: #f59e0b; color: #f59e0b; }
+      .step-indicator.success  { border-color: #10b981; color: #10b981; }
+      .step-indicator.fail     { border-color: #ef4444; color: #ef4444; }
+      .step-indicator .step-icon {
+        width: 32px; height: 32px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 16px;
+        flex-shrink: 0;
+      }
+      .step-indicator.scanning .step-icon { background: rgba(245,158,11,0.15); }
+      .step-indicator.success  .step-icon { background: rgba(16,185,129,0.15); }
+      .step-indicator.fail .step-icon {
+        background: rgba(239, 68, 68, 0.15);
+      }
+
+      /* Toggle Switch (Atlas UI Style) */
+      .toggle-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 16px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      
+      .toggle-label {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-main);
+      }
+
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 44px;
+        height: 24px;
+      }
+
+      .switch input { 
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #4b5563;
+        transition: .3s;
+        border-radius: 24px;
+      }
+
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: .3s;
+        border-radius: 50%;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      }
+
+      input:checked + .slider {
+        background-color: #3b82f6;
+      }
+
+      input:checked + .slider:before {
+        transform: translateX(20px);
+      }
+
+      /* Offline Placeholder */
+      .offline-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #111;
+        color: #666;
+        font-size: 14px;
+        font-weight: 500;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      /* Loading Popup */
+      .loading-popup {
+        position: fixed;
+        top: 0; left: 0; width: 100vw; height: 100vh;
+        background: rgba(0, 0, 0, 0.75);
+        backdrop-filter: blur(4px);
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: white;
+      }
+      .loading-spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #3b82f6;
+        animation: spin 1s ease-in-out infinite;
+        margin-bottom: 16px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Loading Popup (Hidden by default) -->
+    <div id="loadingPopup" class="loading-popup hidden">
+      <div class="loading-spinner"></div>
+      <h2 style="margin:0; font-size:18px; font-weight:600;">Menghubungkan ke Kamera...</h2>
+      <p style="margin-top:8px; font-size:14px; color:#aaa;">Mohon tunggu, sedang mengambil *stream* dari DroidCam.</p>
+    </div>
+    
+    <div class="app-shell">
+      <!-- ═══════ SIDEBAR ═══════ -->
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-icon">P</div>
+          <span class="brand-name">ParkirIn</span>
+        </div>
+
+        <nav class="sidebar-nav">
+          <div class="nav-label">Menu</div>
+
+          <a href="{{ url_for('index') }}" class="nav-link active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+            </svg>
+            Dashboard
+          </a>
+
+          <a href="{{ url_for('markets') }}" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Data Mahasiswa
+          </a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="theme-toggle" id="themeToggle">
+            <div class="theme-toggle-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+              Tema
+            </div>
+            <div class="theme-switch" id="themeSwitch"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ═══════ MAIN ═══════ -->
+      <div class="main-area">
+        <header class="topbar">
+          <h1 class="topbar-title">Live Detection — Direct IP Camera</h1>
+          <div class="topbar-actions">
+            <div class="toggle-container">
+              <span class="toggle-label" id="toggleLabel">Deteksi: OFF</span>
+              <label class="switch">
+                <input type="checkbox" id="detectionToggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </header>
+
+        <div class="content">
+          <!-- Step Indicator -->
+          <div class="step-indicator scanning" id="stepIndicator">
+            <div class="step-icon">🔍</div>
+            <span id="stepText">Menunggu kendaraan...</span>
+          </div>
+
+          <!-- Stats -->
+          <div class="stats-row" id="statsRow">
+            <div class="stat-card">
+              <div class="stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value" id="totalScans">0</div>
+                <div class="stat-label">Total Pemindaian</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value" id="totalSuccess">0</div>
+                <div class="stat-label">Verifikasi Berhasil</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon red">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value" id="totalFail">0</div>
+                <div class="stat-label">Gagal / Tidak Dikenal</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Main Grid -->
+          <div class="dashboard-grid">
+            <!-- Dual Camera Feeds via MJPEG -->
+            <div class="card">
+              <div class="dual-cam-grid">
+                <!-- Kamera Plat (kiri) -->
+                <div>
+                  <div class="cam-label"><span class="dot-plate"></span> Kamera Plat</div>
+                  <div class="cam-feed">
+                    <div class="offline-placeholder" id="plateOffline">
+                      <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="2" fill="none" style="margin-bottom:8px; opacity:0.5;">
+                        <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line>
+                      </svg>
+                      Kamera Mati
+                    </div>
+                    <img src="" id="plateImage" class="hidden" alt="Kamera Plat terputus" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\\'http://www.w3.org/2000/svg\\\' width=\\\'100%\\\' height=\\\'100%\\\'%3E%3Crect width=\\\'100%\\\' height=\\\'100%\\\' fill=\\\'#111\\\'/%3E%3Ctext x=\\\'50%\\\' y=\\\'50%\\\' fill=\\\'#666\\\' font-family=\\\'sans-serif\\\' font-size=\\\'14\\\' text-anchor=\\\'middle\\\'%3ENo Signal%3C/text%3E%3C/svg%3E'">
+                    <div class="video-badge">
+                      <span class="rec-dot"></span>
+                      LIVE
+                    </div>
+                  </div>
+                </div>
+                <!-- Kamera Wajah (kanan) -->
+                <div>
+                  <div class="cam-label"><span class="dot-face"></span> Kamera Wajah</div>
+                  <div class="cam-feed">
+                    <div class="offline-placeholder" id="faceOffline">
+                      <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="2" fill="none" style="margin-bottom:8px; opacity:0.5;">
+                        <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line>
+                      </svg>
+                      Kamera Mati
+                    </div>
+                    <img src="" id="faceImage" class="hidden" alt="Kamera Wajah terputus" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\\'http://www.w3.org/2000/svg\\\' width=\\\'100%\\\' height=\\\'100%\\\'%3E%3Crect width=\\\'100%\\\' height=\\\'100%\\\' fill=\\\'#111\\\'/%3E%3Ctext x=\\\'50%\\\' y=\\\'50%\\\' fill=\\\'#666\\\' font-family=\\\'sans-serif\\\' font-size=\\\'14\\\' text-anchor=\\\'middle\\\'%3ENo Signal%3C/text%3E%3C/svg%3E'">
+                    <canvas id="faceOverlay" class="face-overlay"></canvas>
+                    <div class="video-badge">
+                      <span class="rec-dot"></span>
+                      LIVE
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Detection Log -->
+            <div class="card">
+              <div class="card-header">
+                <h3>Log Deteksi</h3>
+                <span class="badge badge-info" id="logCount">0 Entri</span>
+              </div>
+              <div class="log-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Waktu</th>
+                      <th>Nama</th>
+                      <th>Plat</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="log-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="app-footer">
+          Copyright &copy; 2026 ParkirIn — Fasilkom-TI USU
+        </footer>
+      </div>
+    </div>
+
+    <script>
+      // ═══════ THEME TOGGLE ═══════
+      document.getElementById("themeToggle").addEventListener("click", () => {
+        const html = document.documentElement;
+        const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        html.setAttribute("data-theme", next);
+        localStorage.setItem("theme", next);
+      });
+
+      // ═══════ ELEMENTS ═══════
+      const logBody      = document.getElementById("log-body");
+      const faceOverlay  = document.getElementById("faceOverlay");
+      const faceImg      = document.getElementById("faceImage");
+      const plateImg     = document.getElementById("plateImage");
+      const faceOffline  = document.getElementById("faceOffline");
+      const plateOffline = document.getElementById("plateOffline");
+      const overlayCtx   = faceOverlay.getContext("2d");
+      
+      const detectionToggle = document.getElementById("detectionToggle");
+      const toggleLabel     = document.getElementById("toggleLabel");
+
+      let isProcessing = false;
+      let detectionInterval = null;
+      let isDetectionActive = false;
+      let lastLogTime = 0;
+      let scanCount = 0;
+      let successCount = 0;
+      let failCount = 0;
+
+      // Ensure canvas matches image display size for drawing
+      function resizeCanvas() {
+        faceOverlay.width = faceImg.clientWidth;
+        faceOverlay.height = faceImg.clientHeight;
+      }
+      window.addEventListener('resize', resizeCanvas);
+      faceImg.addEventListener('load', resizeCanvas);
+
+      // ═══════ TOGGLE LOGIC ═══════
+      detectionToggle.addEventListener('change', async (e) => {
+        isDetectionActive = e.target.checked;
+        toggleLabel.textContent = isDetectionActive ? "Deteksi: ON" : "Deteksi: OFF";
+        
+        // Update backend state
+        try {
+          await fetch('/api/toggle_detection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active: isDetectionActive })
+          });
+        } catch (err) {
+          console.error("Gagal mengubah status deteksi", err);
+        }
+
+        if (isDetectionActive) {
+          // Nyalakan Kamera UI
+          plateImg.src = `/video_feed/plate?t=${Date.now()}`;
+          faceImg.src  = `/video_feed/face?t=${Date.now()}`;
+          plateImg.classList.remove("hidden");
+          faceImg.classList.remove("hidden");
+          plateOffline.classList.add("hidden");
+          faceOffline.classList.add("hidden");
+
+          // Mulai polling deteksi
+          if (!detectionInterval) {
+            detectionInterval = setInterval(triggerVerification, 1500);
+          }
+        } else {
+          // Matikan Kamera UI
+          plateImg.src = "";
+          faceImg.src  = "";
+          plateImg.classList.add("hidden");
+          faceImg.classList.add("hidden");
+          plateOffline.classList.remove("hidden");
+          faceOffline.classList.remove("hidden");
+          
+          // Hentikan polling
+          if (detectionInterval) {
+            clearInterval(detectionInterval);
+            detectionInterval = null;
+          }
+
+          // Reset state
+          const stepIndicator = document.getElementById("stepIndicator");
+          stepIndicator.className = "step-indicator scanning";
+          stepIndicator.querySelector(".step-icon").textContent = "⏸️";
+          document.getElementById("stepText").textContent = "Deteksi dinonaktifkan.";
+          overlayCtx.clearRect(0, 0, faceOverlay.width, faceOverlay.height);
+        }
+      });
+
+      // ═══════ DETECTION POLLING LOOP ═══════
+      async function triggerVerification() {
+        if (!isDetectionActive || isProcessing) return;
+        isProcessing = true;
+
+        try {
+          const res = await fetch(`/verify_live?t=${Date.now()}`);
+          const result = await res.json();
+          handleResult(result);
+        } catch (err) {
+          console.error("Fetch error:", err);
+        }
+
+        isProcessing = false;
+      }
+
+      // ═══════ HANDLE RESULT ═══════
+      function handleResult(result) {
+        const now = Date.now();
+        if (now - lastLogTime < 2000) return;
+
+        const stepIndicator = document.getElementById("stepIndicator");
+        const stepText = document.getElementById("stepText");
+        const loadingPopup = document.getElementById("loadingPopup");
+
+        const name = result.name || "—";
+        const plate = result.plate || "—";
+
+        if (result.status === "waiting") {
+          loadingPopup.classList.remove("hidden");
+          return;
+        } else {
+          loadingPopup.classList.add("hidden");
+        }
+
+        if (result.status === "scanning") {
+          stepIndicator.className = "step-indicator scanning";
+          stepIndicator.querySelector(".step-icon").textContent = "🔍";
+          stepText.textContent = result.msg;
+          return;
+        }
+
+        lastLogTime = now;
+        scanCount++;
+        document.getElementById("totalScans").textContent = scanCount;
+
+        let statusText = "";
+        let badgeClass = "";
+        let color = "";
+
+        if (result.status === "success") {
+          statusText = "✅ Akses Diterima";
+          badgeClass = "badge-success";
+          color = "#10b981";
+          successCount++;
+          document.getElementById("totalSuccess").textContent = successCount;
+
+          stepIndicator.className = "step-indicator success";
+          stepIndicator.querySelector(".step-icon").textContent = "✅";
+          stepText.textContent = `${name} — ${plate} — Akses Diterima`;
+        } else {
+          statusText = result.msg || "Gagal";
+          badgeClass = "badge-danger";
+          color = "#ef4444";
+          failCount++;
+          document.getElementById("totalFail").textContent = failCount;
+
+          stepIndicator.className = "step-indicator fail";
+          stepIndicator.querySelector(".step-icon").textContent = "❌";
+          stepText.textContent = result.msg;
+        }
+
+        overlayCtx.clearRect(0, 0, faceOverlay.width, faceOverlay.height);
+        
+        if (result.face_bbox) {
+          const boxW = faceOverlay.width * 0.4;
+          const boxH = faceOverlay.height * 0.5;
+          const cx = faceOverlay.width / 2;
+          const cy = faceOverlay.height / 2;
+          const x1 = cx - boxW / 2;
+          const y1 = cy - boxH / 2;
+
+          overlayCtx.lineWidth = 4;
+          overlayCtx.strokeStyle = color;
+          overlayCtx.strokeRect(x1, y1, boxW, boxH);
+          overlayCtx.fillStyle = color;
+          overlayCtx.fillRect(x1, y1 - 30, boxW, 30);
+          overlayCtx.fillStyle = "white";
+          overlayCtx.font = "bold 18px Inter, sans-serif";
+          overlayCtx.textAlign = "center";
+          overlayCtx.textBaseline = "middle";
+          overlayCtx.fillText(name, cx, y1 - 15);
+        }
+
+        setTimeout(() => {
+          overlayCtx.clearRect(0, 0, faceOverlay.width, faceOverlay.height);
+          stepIndicator.className = "step-indicator scanning";
+          stepIndicator.querySelector(".step-icon").textContent = "🔍";
+          stepText.textContent = "Menunggu kendaraan...";
+        }, 4000);
+
+        addLogRow(name, plate, statusText, badgeClass);
+      }
+
+      function addLogRow(name, plate, status, badgeClass) {
+        const now = new Date();
+        const t = [now.getHours(), now.getMinutes(), now.getSeconds()]
+          .map(n => String(n).padStart(2, "0")).join(":");
+
+        const row = `<tr>
+          <td style="font-family:var(--font-mono);font-size:12px;">${t}</td>
+          <td><strong>${name}</strong></td>
+          <td>${plate}</td>
+          <td><span class="badge ${badgeClass}">${status}</span></td>
+        </tr>`;
+
+        logBody.insertAdjacentHTML("afterbegin", row);
+        if (logBody.children.length > 50) logBody.removeChild(logBody.lastChild);
+
+        document.getElementById("logCount").textContent = logBody.children.length + " Entri";
+      }
+
+      // Initial Setup
+      document.getElementById("stepIndicator").querySelector(".step-icon").textContent = "⏸️";
+      document.getElementById("stepText").textContent = "Deteksi dinonaktifkan. Nyalakan toggle untuk mulai.";
+    </script>
+  </body>
+</html>
