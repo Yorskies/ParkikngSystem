@@ -1,13 +1,16 @@
 import numpy as np
 from insightface.app import FaceAnalysis
 from numpy.linalg import norm
-
+import threading
 
 app = FaceAnalysis(name='buffalo_l')
 app.prepare(ctx_id=-1)  
 
+face_lock = threading.Lock()
+
 def get_embedding(image):
-    faces = app.get(image)
+    with face_lock:
+        faces = app.get(image)
 
     if len(faces) == 0:
         return None
@@ -16,7 +19,8 @@ def get_embedding(image):
     return largest_face.embedding
 
 def get_embedding_and_bbox(image):
-    faces = app.get(image)
+    with face_lock:
+        faces = app.get(image)
 
     if len(faces) == 0:
         return None, None
@@ -29,7 +33,7 @@ def get_embedding_and_bbox(image):
 def cosine_similarity(a, b):
     return np.dot(a, b) / (norm(a) * norm(b))
 
-def verify_embeddings(input_emb, stored_embeddings, threshold=0.5):
+def verify_embeddings(input_emb, stored_embeddings, threshold=0.4):
     best_score = -1
 
     for emb in stored_embeddings:

@@ -48,6 +48,12 @@ print(f"[INFO] Memuat model deteksi plat dari: {PLATE_MODEL_PATH}")
 plate_model = YOLO(PLATE_MODEL_PATH)
 
 # =========================
+# THREAD LOCKS (Mencegah AI Crash karena diakses bersamaan)
+# =========================
+plate_lock = threading.Lock()
+ocr_lock = threading.Lock()
+
+# =========================
 # DATABASE INIT
 # =========================
 def init_db():
@@ -75,6 +81,18 @@ def init_db():
     conn.close()
 
 # =========================
+# GLOBAL VERIFICATION STATE
+# =========================
+VERIFICATION_STATE = {
+    "step": "plate",
+    "locked_plate": None,
+    "locked_owner_id": None,
+    "locked_owner_name": None,
+    "face_attempts": 0,
+    "last_active": time.time()
+}
+
+# =========================
 # GLOBAL STATE
 # =========================
 DETECTION_ACTIVE = False
@@ -83,7 +101,7 @@ DETECTION_ACTIVE = False
 # CAMERA STREAM CLASS (BACKGROUND THREAD)
 # =========================
 class CameraStream:
-    def __init__(self, src=0):
+    def __init__(self, src=0, is_plate_cam=False, is_face_cam=False):
         if isinstance(src, str) and src.isdigit():
             src = int(src)
             
@@ -95,9 +113,53 @@ class CameraStream:
         self.stopped = False
         self.last_access = time.time()
         
+        self.is_plate_cam = is_plate_cam
+        self.is_face_cam = is_face_cam
+        self.latest_bboxes = []
+        
         self.thread = threading.Thread(target=self.update, args=())
         self.thread.daemon = True
         self.thread.start()
+        
+        if self.is_plate_cam or self.is_face_cam:
+            self.detect_thread = threading.Thread(target=self.detect_loop, args=())
+            self.detect_thread.daemon = True
+            self.detect_thread.start()
+
+    def detect_loop(self):
+        global DETECTION_ACTIVE
+        while True:
+            if self.stopped:
+                return
+            if not DETECTION_ACTIVE or time.time() - self.last_access > 10:
+                time.sleep(1)
+                continue
+                
+            frame = self.frame
+            if frame is not None:
+                if self.is_plate_cam:
+                    # Bypass/Pause YOLO jika sedang dalam tahap verifikasi wajah
+                    if VERIFICATION_STATE["step"] != "plate":
+                        self.latest_bboxes = []
+                    else:
+                        with plate_lock:
+                            results = plate_model(frame, verbose=False)
+                        bboxes = []
+                        for result in results:
+                            for box in result.boxes:
+                                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                conf = float(box.conf[0])
+                                if conf > 0.15:
+                                    bboxes.append((x1, y1, x2, y2, conf))
+                        self.latest_bboxes = bboxes
+                elif self.is_face_cam:
+                    _, bbox = get_embedding_and_bbox(frame)
+                    if bbox is not None:
+                        # Format bbox: [x1, y1, x2, y2]
+                        self.latest_bboxes = [(bbox[0], bbox[1], bbox[2], bbox[3], 1.0)]
+                    else:
+                        self.latest_bboxes = []
+            time.sleep(0.05)  # Mencegah CPU usage 100%
 
     def update(self):
         global DETECTION_ACTIVE
@@ -125,7 +187,7 @@ class CameraStream:
             if self.stream is not None and self.stream.isOpened():
                 (grabbed, frame) = self.stream.read()
                 if grabbed:
-                    self.frame = cv2.resize(frame, (640, 480))
+                    self.frame = frame  # Simpan frame dalam resolusi asli HD untuk OCR
                 else:
                     self.stream.release()
                     self.stream = None
@@ -143,10 +205,10 @@ class CameraStream:
 
 # Inisialisasi Stream (Akan mulai otomatis berjalan di background)
 print(f"[INFO] Menghubungkan ke Kamera Plat: {PLATE_CAMERA_URL}")
-plate_cam = CameraStream(PLATE_CAMERA_URL)
+plate_cam = CameraStream(PLATE_CAMERA_URL, is_plate_cam=True)
 
 print(f"[INFO] Menghubungkan ke Kamera Wajah: {FACE_CAMERA_URL}")
-face_cam = CameraStream(FACE_CAMERA_URL)
+face_cam = CameraStream(FACE_CAMERA_URL, is_face_cam=True)
 
 # =========================
 # UTIL
@@ -159,9 +221,17 @@ def clean_plate(text):
     text = re.sub(r'[^A-Z0-9]', '', text)
     return text
 
+def extract_indonesian_plate(plate):
+    """Mengekstrak HANYA bagian yang cocok dengan pola plat nomor Indonesia, mengabaikan teks sampah/tanggal pajak."""
+    match = re.search(r'([A-Z]{1,2}\d{1,4}[A-Z]{0,3})', plate)
+    if match:
+        return match.group(1)
+    return None
+
 def run_paddle_ocr(img):
     try:
-        result = reader.ocr(img, cls=False)
+        with ocr_lock:
+            result = reader.ocr(img, cls=False)
         if not result or not result[0]:
             return ""
         texts = []
@@ -180,7 +250,9 @@ def run_paddle_ocr(img):
 # =========================
 def get_plate_text_auto(image):
     try:
-        results = plate_model(image)
+        with plate_lock:
+            results = plate_model(image)
+        
         best_text = None
         best_conf = 0
 
@@ -197,28 +269,47 @@ def get_plate_text_auto(image):
                     # Pre-processing
                     gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY)
                     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-                    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+                    
+                    # 1. CLAHE (Contrast Limited Adaptive Histogram Equalization)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                    gray_clahe = clahe.apply(gray)
+                    clahe_bgr = cv2.cvtColor(gray_clahe, cv2.COLOR_GRAY2BGR)
+                    
+                    blur = cv2.GaussianBlur(gray_clahe, (5, 5), 0)
 
-                    # Otsu
+                    # 2. Otsu
                     _, otsu_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                     otsu_bgr = cv2.cvtColor(otsu_thresh, cv2.COLOR_GRAY2BGR)
 
-                    # Adaptive
+                    # 3. Adaptive
                     adapt_thresh = cv2.adaptiveThreshold(
                         blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
                     )
                     adapt_bgr = cv2.cvtColor(adapt_thresh, cv2.COLOR_GRAY2BGR)
 
-                    text_extracted = run_paddle_ocr(otsu_bgr)
+                    # 4. Asli Resize
+                    resized_crop = cv2.resize(plate_crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
-                    if not clean_plate(text_extracted):
-                        text_extracted = run_paddle_ocr(adapt_bgr)
+                    # === OCR dengan fallback bertingkat ===
+                    text_extracted = ""
+                    candidates = []
 
-                    if not clean_plate(text_extracted):
-                        resized_crop = cv2.resize(plate_crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-                        text_extracted = run_paddle_ocr(resized_crop)
+                    # List urutan prioritas gambar pre-processing
+                    prep_images = [otsu_bgr, adapt_bgr, clahe_bgr, resized_crop]
 
-                    text_extracted = clean_plate(text_extracted)
+                    for img_prep in prep_images:
+                        temp_text = run_paddle_ocr(img_prep)
+                        temp_clean = clean_plate(temp_text)
+                        if temp_clean:
+                            candidates.append(temp_clean)
+                            valid_part = extract_indonesian_plate(temp_clean)
+                            if valid_part:
+                                text_extracted = valid_part
+                                break  # Langsung berhenti jika ketemu pola plat yang valid
+
+                    # Jika semuanya tidak memiliki pola plat yang valid, fallback ke pembacaan terpanjang yang didapat
+                    if not text_extracted and candidates:
+                        text_extracted = max(candidates, key=len)
 
                     if len(text_extracted) >= 4 and conf > best_conf:
                         best_text = text_extracted
@@ -287,7 +378,24 @@ def generate_frames(camera):
             time.sleep(0.1)
             continue
             
-        ret, buffer = cv2.imencode('.jpg', frame)
+        render_frame = frame.copy()
+        
+        # Gambar overlay secara real-time berdasarkan memori terakhir dari thread
+        if getattr(camera, 'is_plate_cam', False):
+            for (x1, y1, x2, y2, conf) in camera.latest_bboxes:
+                cv2.rectangle(render_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(render_frame, f"Plat: {conf:.2f}", (x1, max(y1-10, 0)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        elif getattr(camera, 'is_face_cam', False):
+            for (x1, y1, x2, y2, conf) in camera.latest_bboxes:
+                cv2.rectangle(render_frame, (x1, y1), (x2, y2), (255, 0, 0), 2) # Biru untuk wajah
+                cv2.putText(render_frame, "Wajah", (x1, max(y1-10, 0)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                            
+        # Perkecil resolusi khusus untuk video yang dikirim ke layar web agar tidak berat/lag
+        render_frame_web = cv2.resize(render_frame, (640, 480))
+            
+        ret, buffer = cv2.imencode('.jpg', render_frame_web)
         if not ret:
             continue
             
@@ -308,6 +416,16 @@ def video_feed_face():
 # =========================
 @app.route('/verify_live', methods=['GET'])
 def verify_live():
+    global VERIFICATION_STATE
+    
+    # Auto-Reset jika tidak ada aktivitas lebih dari 10 detik
+    if time.time() - VERIFICATION_STATE["last_active"] > 10:
+        VERIFICATION_STATE["step"] = "plate"
+        VERIFICATION_STATE["locked_plate"] = None
+        VERIFICATION_STATE["face_attempts"] = 0
+        
+    VERIFICATION_STATE["last_active"] = time.time()
+    
     # Mengambil frame paling baru dari memory
     plate_frame = plate_cam.read()
     face_frame = face_cam.read()
@@ -316,94 +434,129 @@ def verify_live():
         return jsonify({"status": "waiting", "msg": "Menunggu koneksi kamera..."})
 
     # =============================
-    # TAHAP 1: DETEKSI PLAT
+    # STATE: MENCARI PLAT
     # =============================
-    plate_text = get_plate_text_auto(plate_frame)
+    if VERIFICATION_STATE["step"] == "plate":
+        plate_text = get_plate_text_auto(plate_frame)
 
-    if not plate_text:
-        return jsonify({
-            "status": "scanning",
-            "step": "plate",
-            "name": "-",
-            "plate": "-",
-            "msg": "Plat tidak terdeteksi",
-            "face_bbox": None
-        })
+        if not plate_text:
+            return jsonify({
+                "status": "scanning",
+                "step": "plate",
+                "name": "-",
+                "plate": "-",
+                "msg": "Plat tidak terdeteksi",
+                "face_bbox": None
+            })
 
-    print(f"[LIVE] Plat terdeteksi: {plate_text}")
+        print(f"[LIVE] Plat terdeteksi: {plate_text}")
 
-    # =============================
-    # TAHAP 2: CEK KEPEMILIKAN
-    # =============================
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-
-    c.execute("SELECT id, name FROM users WHERE plate=?", (plate_text,))
-    owner_row = c.fetchone()
-
-    if not owner_row:
+        # Cek Database
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id, name FROM users WHERE plate=?", (plate_text,))
+        owner_row = c.fetchone()
         conn.close()
-        print(f"[LIVE] Plat {plate_text} tidak terdaftar")
-        return jsonify({
-            "status": "fail",
-            "step": "ownership",
-            "name": "-",
-            "plate": plate_text,
-            "msg": f"Plat {plate_text} tidak terdaftar",
-            "face_bbox": None
-        })
 
-    owner_id = owner_row[0]
-    owner_name = owner_row[1]
+        if not owner_row:
+            print(f"[LIVE] Plat {plate_text} tidak terdaftar")
+            return jsonify({
+                "status": "fail",
+                "step": "ownership",
+                "name": "-",
+                "plate": plate_text,
+                "msg": f"Plat {plate_text} tidak terdaftar",
+                "face_bbox": None
+            })
 
-    # =============================
-    # TAHAP 3: VERIFIKASI WAJAH 1:1
-    # =============================
-    input_emb, face_bbox = get_embedding_and_bbox(face_frame)
-
-    if input_emb is None:
-        conn.close()
+        # KUNCI DATA DAN UBAH STATE KE PENCARIAN WAJAH
+        VERIFICATION_STATE["step"] = "face"
+        VERIFICATION_STATE["locked_plate"] = plate_text
+        VERIFICATION_STATE["locked_owner_id"] = owner_row[0]
+        VERIFICATION_STATE["locked_owner_name"] = owner_row[1]
+        VERIFICATION_STATE["face_attempts"] = 0
+        
         return jsonify({
             "status": "scanning",
             "step": "face",
-            "name": owner_name,
+            "name": owner_row[1],
             "plate": plate_text,
-            "msg": f"Plat valid ({owner_name}), posisikan wajah...",
+            "msg": f"Plat valid ({owner_row[1]}), posisikan wajah...",
             "face_bbox": None
         })
 
-    c.execute("SELECT embedding FROM embeddings WHERE user_id=?", (owner_id,))
-    rows = c.fetchall()
-    conn.close()
-
-    stored_embeddings = [row[0] for row in rows]
-    match, score = verify_embeddings(input_emb, stored_embeddings)
-
-    print(f"[LIVE] Face match: {match}, score: {score:.4f}")
-
     # =============================
-    # TAHAP 4: KEPUTUSAN AKHIR
+    # STATE: MENCARI WAJAH
     # =============================
-    if match:
-        return jsonify({
-            "status": "success",
-            "step": "done",
-            "name": owner_name,
-            "plate": plate_text,
-            "msg": "Akses diterima",
-            "face_bbox": face_bbox,
-            "score": round(score, 4)
-        })
-    else:
-        return jsonify({
-            "status": "fail",
-            "step": "face_mismatch",
-            "name": owner_name,
-            "plate": plate_text,
-            "msg": "Wajah tidak cocok!",
-            "face_bbox": face_bbox,
-            "score": round(score, 4)
-        })
+    elif VERIFICATION_STATE["step"] == "face":
+        owner_id = VERIFICATION_STATE["locked_owner_id"]
+        owner_name = VERIFICATION_STATE["locked_owner_name"]
+        plate_text = VERIFICATION_STATE["locked_plate"]
+        
+        # Fokus 100% pada wajah
+        input_emb, face_bbox = get_embedding_and_bbox(face_frame)
+
+        if input_emb is None:
+            return jsonify({
+                "status": "scanning",
+                "step": "face",
+                "name": owner_name,
+                "plate": plate_text,
+                "msg": f"Mencari wajah {owner_name}...",
+                "face_bbox": None
+            })
+
+        # Verifikasi
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT embedding FROM embeddings WHERE user_id=?", (owner_id,))
+        rows = c.fetchall()
+        conn.close()
+
+        stored_embeddings = [row[0] for row in rows]
+        match, score = verify_embeddings(input_emb, stored_embeddings)
+
+        print(f"[LIVE] Face match: {match}, score: {score:.4f}")
+
+        if match:
+            # Sukses! Reset state untuk mobil berikutnya
+            VERIFICATION_STATE["step"] = "plate"
+            VERIFICATION_STATE["locked_plate"] = None
+            
+            return jsonify({
+                "status": "success",
+                "step": "done",
+                "name": owner_name,
+                "plate": plate_text,
+                "msg": "Akses diterima",
+                "face_bbox": face_bbox,
+                "score": round(float(score), 4)
+            })
+        else:
+            VERIFICATION_STATE["face_attempts"] += 1
+            if VERIFICATION_STATE["face_attempts"] >= 10:
+                print(f"[LIVE] Wajah gagal diverifikasi 10x, reset ke pencarian plat.")
+                VERIFICATION_STATE["step"] = "plate"
+                VERIFICATION_STATE["locked_plate"] = None
+                return jsonify({
+                    "status": "fail",
+                    "step": "face",
+                    "name": owner_name,
+                    "plate": plate_text,
+                    "msg": "Batas waktu wajah habis. Scan plat ulang.",
+                    "face_bbox": face_bbox,
+                    "score": round(float(score), 4)
+                })
+                
+            return jsonify({
+                "status": "fail",
+                "step": "face",
+                "name": owner_name,
+                "plate": plate_text,
+                "msg": "Wajah tidak cocok!",
+                "face_bbox": face_bbox,
+                "score": round(float(score), 4)
+            })
 
 # =========================
 # REGISTER
