@@ -20,7 +20,7 @@ except ImportError:
 # =========================
 INPUT_FOLDER = 'Testing_plat'
 OUTPUT_FOLDER = 'Testing_plat_output'
-PLATE_MODEL_PATH = os.getenv("PLATE_MODEL_PATH", "models/modelplat.pt")
+PLATE_MODEL_PATH = os.getenv("PLATE_MODEL_PATH", "models/best_finetuned.pt")
 YOLO_CONF_THRESHOLD = 0.15
 MIN_PLATE_TEXT_LEN = 4
 
@@ -44,6 +44,14 @@ def clean_plate(text):
     text = text.upper()
     text = re.sub(r'[^A-Z0-9]', '', text)
     return text
+
+def extract_indonesian_plate(plate):
+    """Mengekstrak HANYA bagian yang cocok dengan pola plat nomor Indonesia, mengabaikan teks sampah/tanggal pajak."""
+    # Pola: 1-2 Huruf, diikuti 1-4 Angka, diikuti 0-3 Huruf
+    match = re.search(r'([A-Z]{1,2}\d{1,4}[A-Z]{0,3})', plate)
+    if match:
+        return match.group(1)
+    return None
 
 def normalize_plate(plate):
     """Normalize plate text."""
@@ -125,35 +133,47 @@ def process_images():
                     # === Pre-processing ===
                     gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY)
                     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-                    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+                    
+                    # 1. CLAHE (Contrast Limited Adaptive Histogram Equalization)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                    gray_clahe = clahe.apply(gray)
+                    clahe_bgr = cv2.cvtColor(gray_clahe, cv2.COLOR_GRAY2BGR)
+                    
+                    blur = cv2.GaussianBlur(gray_clahe, (5, 5), 0)
 
-                    # Otsu's Thresholding -> convert back to BGR for PaddleOCR
+                    # 2. Otsu's Thresholding
                     _, otsu_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                     otsu_bgr = cv2.cvtColor(otsu_thresh, cv2.COLOR_GRAY2BGR)
 
-                    # Adaptive Thresholding -> convert back to BGR
+                    # 3. Adaptive Thresholding
                     adapt_thresh = cv2.adaptiveThreshold(
                         blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
                     )
                     adapt_bgr = cv2.cvtColor(adapt_thresh, cv2.COLOR_GRAY2BGR)
 
+                    # 4. Asli Resize
+                    resized_crop = cv2.resize(plate_crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
                     # === OCR dengan fallback bertingkat ===
                     text_extracted = ""
+                    candidates = []
 
-                    # 1. Coba Otsu threshold
-                    text_extracted = run_paddle_ocr(otsu_bgr)
+                    # List urutan prioritas gambar pre-processing
+                    prep_images = [otsu_bgr, adapt_bgr, clahe_bgr, resized_crop]
 
-                    # 2. Jika gagal, coba Adaptive threshold
-                    if not clean_plate(text_extracted):
-                        text_extracted = run_paddle_ocr(adapt_bgr)
+                    for img_prep in prep_images:
+                        temp_text = run_paddle_ocr(img_prep)
+                        temp_clean = clean_plate(temp_text)
+                        if temp_clean:
+                            candidates.append(temp_clean)
+                            valid_part = extract_indonesian_plate(temp_clean)
+                            if valid_part:
+                                text_extracted = valid_part
+                                break  # Langsung berhenti jika ketemu pola plat yang valid
 
-                    # 3. Jika masih gagal, fallback ke crop asli (sudah BGR)
-                    if not clean_plate(text_extracted):
-                        resized_crop = cv2.resize(plate_crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-                        text_extracted = run_paddle_ocr(resized_crop)
-
-                    # Clean up hasil
-                    text_extracted = clean_plate(text_extracted)
+                    # Jika semuanya tidak memiliki pola plat yang valid, fallback ke pembacaan terpanjang yang didapat
+                    if not text_extracted and candidates:
+                        text_extracted = max(candidates, key=len)
 
                     if len(text_extracted) >= MIN_PLATE_TEXT_LEN and conf > best_conf:
                         best_text = text_extracted

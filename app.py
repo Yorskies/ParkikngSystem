@@ -43,7 +43,7 @@ import sys
 import ultralytics
 sys.modules['ultralytics.yolo'] = ultralytics
 
-PLATE_MODEL_PATH = os.getenv("PLATE_MODEL_PATH", "models/modelplat.pt")
+PLATE_MODEL_PATH = os.getenv("PLATE_MODEL_PATH", "models/best_finetuned.pt")
 print(f"[INFO] Memuat model deteksi plat dari: {PLATE_MODEL_PATH}")
 plate_model = YOLO(PLATE_MODEL_PATH)
 
