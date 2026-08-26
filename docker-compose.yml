@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: parkir_ai_app
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Sinkronisasi folder model (termasuk .pt YOLO) agar mudah di-update
+      - ./models:/app/models
+      
+      # Sinkronisasi Database agar data tidak hilang ketika container mati
+      - ./database.db:/app/database.db
+      
+      # Sinkronisasi foto-foto wajah terdaftar
+      - ./uploads:/app/uploads
+      
+      # Sinkronisasi folder model bawaan InsightFace agar tidak perlu di-download ulang terus menerus
+      # Ini akan men-cache folder model "buffalo_l" di luar container
+      - insightface_models:/root/.insightface
+
+volumes:
+  insightface_models:

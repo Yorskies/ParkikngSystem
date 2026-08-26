@@ -1,9 +1,9 @@
 Flask
-easyocr
 ultralytics
 numpy<2
 onnxruntime
-opencv-python==4.9.0.80
-opencv-python-headless==4.9.0.80
-scipy==1.12.0
-tifffile<2024
+opencv-python-headless
+paddleocr>=2.7.0.0
+paddlepaddle>=2.6.0
+insightface
+python-dotenv
